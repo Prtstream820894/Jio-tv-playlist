@@ -2,8 +2,8 @@ name: Auto Update Playlist
 
 on:
   schedule:
-    - cron: '0 */2 * * *' # Runs every 2 hours
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    - cron: '0 */2 * * *' # Every 2 hours
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,8 +20,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
-        run: pip install requests
+      - name: Install dependencies & Playwright Browser
+        run: |
+          pip install requests playwright
+          playwright install --with-deps chromium
 
       - name: Run update script
         run: python update_playlist.py
