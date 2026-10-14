@@ -1,23 +1,10 @@
 import os
 import re
 import requests
+from playwright.sync_api import sync_playwright
 
 url1 = "https://sportlink-playlist.pages.dev/zio.m3u"
 url2 = "https://premiumplugx.me/vzy/playlist.php"
-
-# Create a session with browser headers
-session = requests.Session()
-session.headers.update({
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,'
-        ' like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    ),
-    'Accept': (
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-    ),
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Connection': 'keep-alive',
-})
 
 
 def parse_m3u_blocks(content):
@@ -43,12 +30,60 @@ def parse_m3u_blocks(content):
   return blocks
 
 
+def get_source2_with_playwright(url):
+  print(f'Opening {url} using Playwright Headless Browser...')
+  try:
+    with sync_playwright() as p:
+      browser = p.chromium.launch(
+          headless=True,
+          args=[
+              '--no-sandbox',
+              '--disable-setuid-sandbox',
+              '--disable-blink-features=AutomationControlled',
+          ],
+      )
+      context = browser.new_context(
+          user_agent=(
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              ' (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+          )
+      )
+      page = context.new_page()
+
+      # Navigate to the playlist URL
+      response = page.goto(url, wait_until='networkidle', timeout=60000)
+
+      # Extract full text/source of the page
+      content = page.content()
+      # Clean up HTML tags if browser wrapped text in <body>/pre tags
+      text_content = page.evaluate('document.body.innerText')
+
+      browser.close()
+
+      if '#EXTINF' in text_content:
+        print('Successfully extracted M3U content via Playwright!')
+        return text_content
+      elif '#EXTINF' in content:
+        print('Successfully extracted M3U content from raw body!')
+        return content
+      else:
+        print(
+            'Playwright opened the page but #EXTINF tags were not found.'
+            ' Previewing snippet:'
+        )
+        print(text_content[:200])
+        return text_content
+  except Exception as e:
+    print(f'Playwright error: {e}')
+    return ''
+
+
 new_blocks = []
 
 # --- 1. Process Source 1 (Star Sports Only) ---
 try:
   print('Fetching Source 1...')
-  resp1 = session.get(url1, timeout=30)
+  resp1 = requests.get(url1, timeout=30)
   if resp1.status_code == 200:
     blocks1 = parse_m3u_blocks(resp1.text)
     print(f'Source 1 total parsed items: {len(blocks1)}')
@@ -82,29 +117,28 @@ try:
 except Exception as e:
   print(f'Error Source 1: {e}')
 
-# --- 2. Process Source 2 (Via URL or Local Fallback file 'source2.m3u') ---
-source2_content = ''
-try:
-  print('Fetching Source 2...')
-  resp2 = session.get(url2, timeout=30)
-  if resp2.status_code == 200:
-    source2_content = resp2.text
-    print('Source 2 fetched successfully from URL.')
-  else:
-    print(
-        f'Source 2 returned status code: {resp2.status_code}. Checking local'
-        ' fallback file...'
+# --- 2. Process Source 2 (Via Playwright Browser) ---
+source2_content = get_source2_with_playwright(url2)
+
+# Fallback: Check requests if playwright fails
+if not source2_content or '#EXTINF' not in source2_content:
+  try:
+    print('Trying standard HTTP request fallback for Source 2...')
+    r2 = requests.get(
+        url2,
+        headers={
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0'
+            )
+        },
+        timeout=30,
     )
-except Exception as e:
-  print(f'Error fetching Source 2 via URL: {e}. Checking local fallback file...')
+    if r2.status_code == 200:
+      source2_content = r2.text
+  except Exception as e:
+    print(f'Standard request error: {e}')
 
-# Fallback: If URL failed or got 403, read from local 'source2.m3u' file in repo if it exists
-if not source2_content and os.path.exists('source2.m3u'):
-  with open('source2.m3u', 'r', encoding='utf-8') as f:
-    source2_content = f.read()
-  print('Loaded Source 2 data from local fallback file: source2.m3u')
-
-if source2_content:
+if source2_content and '#EXTINF' in source2_content:
   blocks2 = parse_m3u_blocks(source2_content)
   print(f'Source 2 total parsed items: {len(blocks2)}')
 
@@ -140,10 +174,7 @@ if source2_content:
       count2 += 1
   print(f'Source 2 channels added: {count2}')
 else:
-  print(
-      'Warning: Source 2 content is empty! (No URL data and no source2.m3u file'
-      ' found)'
-  )
+  print('Error: Could not extract valid M3U data from Source 2.')
 
 # --- Output Final M3U File ---
 output_lines = ['#EXTM3U']
