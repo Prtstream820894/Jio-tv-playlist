@@ -3,7 +3,7 @@ import re
 import requests
 from playwright.sync_api import sync_playwright
 
-url1 = "https://sportlink-playlist.pages.dev/zio.m3u"
+url1 = ""
 url2 = "https://premiumplugx.me/vzy/playlist.php"
 
 
